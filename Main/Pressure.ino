@@ -1,0 +1,37 @@
+#include <Wire.h>
+#include "MS5837.h"
+
+MS5837 sensor;
+
+void pressureSetup() {
+    Serial.begin(SERIAL_BAUD);
+    Wire.begin();
+
+    sprintf(serialBuffer, "Starting MS5837...\n");
+    Serial.print(serialBuffer);
+
+    while (!sensor.init()) {
+        sprintf(serialBuffer, "MS5837 init failed! Check SDA/SCL wiring\n");
+        Serial.print(serialBuffer);
+        delay(2000);
+    }
+
+    sensor.setModel(MS5837::MS5837_30BA);
+    sensor.setFluidDensity(997); // 997 = freshwater, 1029 = seawater
+
+    sprintf(serialBuffer, "MS5837 initialized\n");
+    Serial.print(serialBuffer);
+}
+
+void pressureStep() {
+    sensor.read();
+
+    sprintf(serialBuffer,
+            "Pressure: %.2f mbar | Temp: %.2f C | Depth: %.2f m | Altitude: %.2f m\n",
+            sensor.pressure(),
+            sensor.temperature(),
+            sensor.depth(),
+            sensor.altitude());
+
+    Serial.print(serialBuffer);
+}
