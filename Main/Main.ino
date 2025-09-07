@@ -6,6 +6,10 @@ unsigned long lastPressure = 0;
 
 void setup() {
     pressureSetup();
+
+    // To be Tested //
+    //batterySetup();
+    //storageSetup();
 }
 
 void loop() {
