@@ -6,6 +6,7 @@ unsigned long lastPressure = 0;
 
 void setup() {
     pressureSetup();
+    adxlSetup();
 
     // To be Tested //
     //batterySetup();
@@ -15,6 +16,7 @@ void setup() {
 void loop() {
     if (checkTimer(lastPressure, 1000)) { // every 1 second
         pressureStep();
+        adxlStep();
     }
 }
 
