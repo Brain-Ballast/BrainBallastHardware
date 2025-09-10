@@ -1,0 +1,6 @@
+Library Conflicts with Storage.ino and basic sd car reader ardino files
+
+
+Libraries:
+Adafruit ADXL345
+BlueRobotics MS5837
