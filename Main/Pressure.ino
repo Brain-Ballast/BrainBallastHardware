@@ -34,3 +34,11 @@ void pressureStep() {
 
     Serial.print(serialBuffer);
 }
+
+// Optomizations //
+// OSR = Over Sampling Ratio
+// Higher OSR = more accurate, but slower and more power
+// Lower OSR = faster, less power, but less accurate
+// Valid values: MS5837_OSR_256, MS5837_OSR_512, MS5837_OSR_1024, 
+//               MS5837_OSR_2048, MS5837_OSR_4096, MS5837_OSR_8192
+//sensor.setPressureOSR(osr);
