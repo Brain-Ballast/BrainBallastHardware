@@ -4,7 +4,6 @@
 MS5837 sensor;
 
 void pressureSetup() {
-    Serial.begin(SERIAL_BAUD);
     Wire.begin();
 
     sprintf(serialBuffer, "Starting MS5837...\n");

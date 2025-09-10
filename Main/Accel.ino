@@ -1,30 +1,31 @@
-#include <Adafruit_ADXL345_U.h>
+#include <SparkFun_ADXL345.h>
 
-Adafruit_ADXL345_Unified accel = Adafruit_ADXL345_Unified(12345);
+ADXL345 accel;
+
+extern char serialBuffer[128];
 
 void adxlSetup() {
     sprintf(serialBuffer, "Starting ADXL345...\n");
     Serial.print(serialBuffer);
 
-    if (!accel.begin()) {
-        sprintf(serialBuffer, "ADXL345 not detected. Check wiring!\n");
-        Serial.print(serialBuffer);
-        while (1);
-    }
+    accel.powerOn();
 
-    accel.setRange(ADXL345_RANGE_16_G);  // Example range
+    // Set resolution 2, 4, 8, 16g
+    accel.setRangeSetting(16);
+
     sprintf(serialBuffer, "ADXL345 initialized\n");
     Serial.print(serialBuffer);
 }
 
 void adxlStep() {
-    sensors_event_t event;
-    accel.getEvent(&event);
+    int x, y, z;
+    accel.readAccel(&x, &y, &z);
 
-    sprintf(serialBuffer,
-            "Accel X: %.2f | Y: %.2f | Z: %.2f m/s^2\n",
-            event.acceleration.x,
-            event.acceleration.y,
-            event.acceleration.z);
+    // Convert raw LSB to g (~3.9 mg/LSB in full res mode)
+    float x_g = x * 0.0039f;
+    float y_g = y * 0.0039f;
+    float z_g = z * 0.0039f;
+
+    sprintf(serialBuffer, "Accel X: %.2f g | Y: %.2f g | Z: %.2f g\n", x_g, y_g, z_g);
     Serial.print(serialBuffer);
 }
