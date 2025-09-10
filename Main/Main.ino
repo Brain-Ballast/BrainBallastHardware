@@ -5,6 +5,8 @@ static char serialBuffer[128];
 unsigned long lastPressure = 0;
 
 void setup() {
+    Serial.begin(SERIAL_BAUD);
+    
     pressureSetup();
     adxlSetup();
 
