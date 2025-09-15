@@ -1,41 +1,151 @@
-#include "FS.h"
-#include "SD.h"
-#include "SPI.h"
+#include <SPI.h>
+#include <SD.h>
 
-// Add this line to resolve the 'fs::FS' errors
-using namespace fs;
+// SD Card Configuration for XIAO ESP32-C3
+const int SD_CS_PIN = D7;
+const char* LOG_FILENAME = "data.txt";
 
-void listDir(FS &fs, const char * dirname, uint8_t levels){
-    Serial.printf("Listing directory: %s\n", dirname);
+// Storage state
+bool sdCardInitialized = false;
+bool sdCardSleeping = false;
 
-    File root = fs.open(dirname);
-    if(!root){
-        Serial.println("Failed to open directory");
-        return;
+extern char serialBuffer[128];
+
+void storageSetup() {
+    sprintf(serialBuffer, "Starting Storage...\n");
+    Serial.print(serialBuffer);
+    
+    // Initialize SPI pins
+    pinMode(SD_CS_PIN, OUTPUT);
+    digitalWrite(SD_CS_PIN, HIGH);
+    if (SD.begin(SD_CS_PIN)) {
+        sdCardInitialized = true;
+        sprintf(serialBuffer, "SD card initialized\n");
+        Serial.print(serialBuffer);
+    } else {
+        sprintf(serialBuffer, "SD card init failed\n");
+        Serial.print(serialBuffer);
     }
-    if(!root.isDirectory()){
-        Serial.println("Not a directory");
-        return;
+    sprintf(serialBuffer, "Storage initialized\n");
+    Serial.print(serialBuffer);
+}
+
+bool storageWrite(const char* data) {
+    bool success = false;
+
+    if (sdCardSleeping) {
+        storageWake();
     }
 
-    File file = root.openNextFile();
-    while(file){
-        if(file.isDirectory()){
-            Serial.print("  DIR : ");
-            Serial.println(file.name());
-            if(levels){
-                listDir(fs, file.name(), levels -1);
-            }
-        } else {
-            Serial.print("  FILE: ");
-            Serial.print(file.name());
-            Serial.print("  SIZE: ");
-            Serial.println(file.size());
+    if (!sdCardInitialized) {
+        if (!storageInit()) {
+            sprintf(serialBuffer, "SD init failed\n");
+            Serial.print(serialBuffer);
+            storageSleep(); // Put back to sleep on failure
+            return false;
         }
-        file = root.openNextFile();
+    }
+    
+    File dataFile = SD.open(LOG_FILENAME, FILE_WRITE);
+    if (dataFile) {
+        dataFile.print(data);
+        dataFile.close();
+        success = true;
+        
+        sprintf(serialBuffer, "Data written to SD (%d bytes)\n", strlen(data));
+        Serial.print(serialBuffer);
+    } else {
+        sprintf(serialBuffer, "Error opening %s\n", LOG_FILENAME);
+        Serial.print(serialBuffer);
+    }
+  
+    storageSleep();
+    
+    return success;
+}
+
+bool storageInit() {
+    if (SD.begin(SD_CS_PIN)) {
+        sdCardInitialized = true;
+        sprintf(serialBuffer, "SD card re-initialized\n");
+        Serial.print(serialBuffer);
+        return true;
+    } else {
+        sprintf(serialBuffer, "SD card init failed\n");
+        Serial.print(serialBuffer);
+        return false;
     }
 }
 
-// ... the rest of your functions (createDir, removeDir, etc.) will now work correctly
-// as long as you change `fs::FS` to just `FS` in their declarations, or use the
-// `using namespace fs;` method above.
+void storageSleep() {
+    if (!sdCardSleeping) {
+        // Method 1: SPI Bus sleep
+        digitalWrite(SD_CS_PIN, HIGH);
+        SPI.end();
+        
+        sdCardSleeping = true;
+        sdCardInitialized = false;
+        
+        sprintf(serialBuffer, "SD card sleeping\n");
+        Serial.print(serialBuffer);
+    }
+}
+
+void storageWake() {
+    if (sdCardSleeping) {
+        SPI.begin();
+        delay(10);
+        sdCardSleeping = false;
+        sprintf(serialBuffer, "SD card waking\n");
+        Serial.print(serialBuffer);
+    }
+}
+
+bool storageWriteWithTimestamp(const char* data) {
+    char timestampBuffer[2200];
+    sprintf(timestampBuffer, "%lu,%s", millis(), data);
+    return storageWrite(timestampBuffer);
+}
+
+bool storageWriteBatch(const char* lines[], int count) {
+    bool success = false;
+    if (sdCardSleeping) {
+        storageWake();
+    }
+    
+    if (!sdCardInitialized) {
+        if (!storageInit()) {
+            sprintf(serialBuffer, "SD init failed\n");
+            Serial.print(serialBuffer);
+            storageSleep();
+            return false;
+        }
+    }
+    
+    File dataFile = SD.open(LOG_FILENAME, FILE_WRITE);
+    if (dataFile) {
+        for (int i = 0; i < count; i++) {
+            dataFile.print(lines[i]);
+        }
+        dataFile.close();
+        success = true;
+        
+        sprintf(serialBuffer, "Batch of %d lines written to SD\n", count);
+        Serial.print(serialBuffer);
+    } else {
+        sprintf(serialBuffer, "Error opening %s for batch write\n", LOG_FILENAME);
+        Serial.print(serialBuffer);
+    }
+    
+    storageSleep();
+    
+    return success;
+}
+
+void storageSleepNow() {
+    storageSleep();
+}
+
+void storageWakeNow() {
+    storageWake();
+}
