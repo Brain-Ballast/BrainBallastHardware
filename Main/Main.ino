@@ -2,8 +2,8 @@
 
 // Global variable definitions (only define once here)
 char serialBuffer[128];
-char outputBuffer[2048];
-char storageBuffer[2048]; 
+char outputBuffer[8192];
+char storageBuffer[8192]; 
 
 unsigned long lastSensorReading = 0;
 unsigned long lastBTTransmit = 0;
@@ -50,7 +50,7 @@ void loop() {
         }
     }
 
-    if (checkTimer(lastStorageWrite, 30000)) {
+    if (checkTimer(lastStorageWrite, 3000)) {
         if (strlen(storageBuffer) > 0) {
             sprintf(serialBuffer, "Writing to storage (%d chars)\n", strlen(storageBuffer));
             Serial.print(serialBuffer);

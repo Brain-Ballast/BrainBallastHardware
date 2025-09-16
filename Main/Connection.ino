@@ -10,7 +10,7 @@ extern char serialBuffer[128];
 bool bleConnected = false;
 bool bleInitialized = false;
 
-#define SERVICE_UUID           "6E400001-B5A3-F393-E0A9-E50E24DCCA9E" // UART service UUID
+#define SERVICE_UUID           "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
 #define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
 #define CHARACTERISTIC_UUID_TX "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
@@ -25,7 +25,8 @@ class MyServerCallbacks: public BLEServerCallbacks {
       bleConnected = false;
       sprintf(serialBuffer, "BLE client disconnected\n");
       Serial.print(serialBuffer);
-      pServer->startAdvertising(); // Restart advertising
+      delay(500);
+      pServer->startAdvertising();
     }
 };
 
@@ -33,7 +34,12 @@ void connectionSetup() {
     sprintf(serialBuffer, "Starting BLE...\n");
     Serial.print(serialBuffer);
     
+    BLEDevice::deinit(false);
+    delay(100);
+    
     BLEDevice::init("BrainBallast");
+    BLEDevice::setPower(ESP_PWR_LVL_P9);
+    
     pServer = BLEDevice::createServer();
     pServer->setCallbacks(new MyServerCallbacks());
 
@@ -47,10 +53,16 @@ void connectionSetup() {
     pTxCharacteristic->addDescriptor(new BLE2902());
 
     pService->start();
-    pServer->getAdvertising()->start();
+    
+    BLEAdvertising *pAdvertising = pServer->getAdvertising();
+    pAdvertising->addServiceUUID(SERVICE_UUID);
+    pAdvertising->setScanResponse(true);
+    pAdvertising->setMinPreferred(0x06);
+    pAdvertising->setMinPreferred(0x12);
+    pAdvertising->start();
     
     bleInitialized = true;
-    sprintf(serialBuffer, "BLE initialized\n");
+    sprintf(serialBuffer, "BLE initialized and advertising\n");
     Serial.print(serialBuffer);
 }
 
@@ -63,9 +75,8 @@ bool btSendData(const char* data) {
         return false;
     }
     
-    // BLE has MTU limit, send in chunks if needed
     int dataLen = strlen(data);
-    const int maxChunk = 500; // Safe chunk size
+    const int maxChunk = 200;
     
     for (int i = 0; i < dataLen; i += maxChunk) {
         int chunkLen = min(maxChunk, dataLen - i);
@@ -74,14 +85,10 @@ bool btSendData(const char* data) {
         pTxCharacteristic->setValue(chunk.c_str());
         pTxCharacteristic->notify();
         
-        delay(20); // Small delay between chunks
+        delay(50);
     }
     
     sprintf(serialBuffer, "BLE sent %d bytes\n", dataLen);
     Serial.print(serialBuffer);
     return true;
-}
-
-void connectionStep() {
-    // Nothing needed - callbacks handle connection state
 }
