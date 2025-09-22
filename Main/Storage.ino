@@ -190,6 +190,172 @@ bool storageWriteBatch(const char* lines[], int count) {
     return true;
 }
 
+// Command handler functions for BT interface
+void storageListFiles() {
+    if (!sdCardInitialized) {
+        btSendData("SD card not initialized\n");
+        return;
+    }
+    
+    btSendData("Files on SD card:\n");
+    File root = SD.open("/");
+    if (root && root.isDirectory()) {
+        File file = root.openNextFile();
+        bool foundFiles = false;
+        while (file) {
+            if (!file.isDirectory()) {
+                String fileInfo = String(file.name()) + " (" + String(file.size()) + " bytes)\n";
+                btSendData(fileInfo.c_str());
+                foundFiles = true;
+            }
+            file = root.openNextFile();
+        }
+        root.close();
+        
+        if (!foundFiles) {
+            btSendData("No files found\n");
+        }
+    } else {
+        btSendData("Failed to open root directory\n");
+    }
+    btSendData("End of file list\n");
+}
+
+void storageDownloadFile(String filename) {
+    if (!sdCardInitialized) {
+        btSendData("SD card not initialized\n");
+        return;
+    }
+    
+    String filePath = "/" + filename;
+    File file = SD.open(filePath.c_str());
+    
+    if (!file) {
+        String response = "File not found: " + filename + "\n";
+        btSendData(response.c_str());
+        return;
+    }
+    
+    // Send file info first
+    String response = "=== Downloading " + filename + " (" + String(file.size()) + " bytes) ===\n";
+    btSendData(response.c_str());
+    
+    // Read and send file in larger chunks optimized for ESP32-C3 BLE
+    char buffer[512];  // Larger buffer for better throughput
+    int totalSent = 0;
+    while (file.available()) {
+        int bytesRead = file.read((uint8_t*)buffer, sizeof(buffer) - 1);
+        buffer[bytesRead] = '\0';
+        
+        // Send data immediately without delay for max speed
+        if (btSendData(buffer)) {
+            totalSent += bytesRead;
+        } else {
+            // Only add delay if send failed (BT buffer full)
+            delay(50);
+        }
+    }
+    
+    file.close();
+    btSendData("\n=== End of file ===\n");
+    
+    sprintf(serialBuffer, "Download complete: %d bytes sent\n", totalSent);
+    Serial.print(serialBuffer);
+}
+
+void storageTailFile(String filename, int lines) {
+    if (!sdCardInitialized) {
+        btSendData("SD card not initialized\n");
+        return;
+    }
+    
+    String filePath = "/" + filename;
+    File file = SD.open(filePath.c_str());
+    
+    if (!file) {
+        String response = "File not found: " + filename + "\n";
+        btSendData(response.c_str());
+        return;
+    }
+    
+    // Simple tail implementation - read entire file and return last N lines
+    String content = "";
+    while (file.available()) {
+        content += (char)file.read();
+    }
+    file.close();
+    
+    // Count lines from the end
+    int lineCount = 0;
+    int pos = content.length() - 1;
+    while (pos >= 0 && lineCount < lines) {
+        if (content.charAt(pos) == '\n') {
+            lineCount++;
+        }
+        pos--;
+    }
+    
+    String result = content.substring(pos + 2); // +2 to skip the newline
+    String response = "=== Last " + String(lines) + " lines of " + filename + " ===\n";
+    btSendData(response.c_str());
+    btSendData(result.c_str());
+}
+
+void storageFileSize(String filename) {
+    if (!sdCardInitialized) {
+        btSendData("SD card not initialized\n");
+        return;
+    }
+    
+    String filePath = "/" + filename;
+    File file = SD.open(filePath.c_str());
+    
+    if (!file) {
+        String response = "File not found: " + filename + "\n";
+        btSendData(response.c_str());
+        return;
+    }
+    
+    String response = filename + ": " + String(file.size()) + " bytes\n";
+    file.close();
+    btSendData(response.c_str());
+}
+
+void storageDeleteFile(String filename) {
+    if (!sdCardInitialized) {
+        btSendData("SD card not initialized\n");
+        return;
+    }
+    
+    String filePath = "/" + filename;
+    if (SD.remove(filePath.c_str())) {
+        String response = "Deleted: " + filename + "\n";
+        btSendData(response.c_str());
+    } else {
+        String response = "Failed to delete: " + filename + "\n";
+        btSendData(response.c_str());
+    }
+}
+
+void storageInfo() {
+    if (!sdCardInitialized) {
+        btSendData("SD card not initialized\n");
+        return;
+    }
+    
+    uint64_t totalBytes = SD.totalBytes();
+    uint64_t usedBytes = SD.usedBytes();
+    uint64_t freeBytes = totalBytes - usedBytes;
+    
+    String info = "SD Card Info:\n";
+    info += "Total: " + String((double)totalBytes / (1024 * 1024), 1) + " MB\n";
+    info += "Used: " + String((double)usedBytes / (1024 * 1024), 1) + " MB\n";
+    info += "Free: " + String((double)freeBytes / (1024 * 1024), 1) + " MB\n";
+    info += "Usage: " + String((double)usedBytes / totalBytes * 100, 1) + "%\n";
+    
+    btSendData(info.c_str());
+}
+
 // Debug function to check what's happening
 void storageDebug() {
     sprintf(serialBuffer, "\n=== SD Card Debug Info ===\n");
