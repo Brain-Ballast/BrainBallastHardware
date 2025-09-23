@@ -55,6 +55,9 @@ void connectionSetup() {
     BLEDevice::init("BrainBallast");
     BLEDevice::setPower(ESP_PWR_LVL_P9);
     
+    // Set optimal BLE parameters for high throughput
+    BLEDevice::setMTU(517);  // Maximum BLE MTU
+    
     pServer = BLEDevice::createServer();
     pServer->setCallbacks(new MyServerCallbacks());
 
@@ -84,7 +87,7 @@ void connectionSetup() {
     pAdvertising->start();
     
     bleInitialized = true;
-    sprintf(serialBuffer, "BLE initialized and advertising\n");
+    sprintf(serialBuffer, "BLE initialized with optimized settings\n");
     Serial.print(serialBuffer);
 }
 
@@ -98,7 +101,7 @@ bool btSendData(const char* data) {
     }
     
     int dataLen = strlen(data);
-    const int maxChunk = 200;
+    const int maxChunk = 512;  // Increased from 200 to 512
     
     for (int i = 0; i < dataLen; i += maxChunk) {
         int chunkLen = min(maxChunk, dataLen - i);
@@ -107,14 +110,16 @@ bool btSendData(const char* data) {
         pTxCharacteristic->setValue(chunk.c_str());
         pTxCharacteristic->notify();
         
-        delay(10);
+        // Reduced delay for better speed
+        if (chunkLen == maxChunk && dataLen > 1024) {
+            delayMicroseconds(500);  // 0.5ms instead of 10ms
+        }
     }
     
     sprintf(serialBuffer, "BLE sent %d bytes\n", dataLen);
     Serial.print(serialBuffer);
     return true;
 }
-
 void btReconnect() {
     if (!bleInitialized) return;
     
@@ -149,12 +154,15 @@ void btHandleCommands() {
 }
 
 void processCommand(String command) {
-    sprintf(serialBuffer, "Processing command: %s\n", command.c_str());
+    sprintf(serialBuffer, "Processing: %s\n", command.c_str());
     Serial.print(serialBuffer);
     
-    // Send acknowledgment that we received the command
+    // Send acknowledgment
     String ack = "Received: " + command + "\n";
     btSendData(ack.c_str());
+    
+    // Add small delay to ensure acknowledgment is sent first
+    delay(10);
     
     if (command.equals("list")) {
         storageListFiles();
@@ -171,10 +179,10 @@ void processCommand(String command) {
             String amountStr = command.substring(spaceIndex + 1);
             filename.trim();
             int amount = amountStr.toInt();
-            if (amount > 0) {
+            if (amount > 0 && amount <= 1000) {  // Limit to reasonable number
                 storageTailFile(filename, amount);
             } else {
-                btSendData("Invalid line count for tail command\n");
+                btSendData("Invalid line count (1-1000): tail <filename> <lines>\n");
             }
         } else {
             btSendData("Usage: tail <filename> <lines>\n");
@@ -194,7 +202,7 @@ void processCommand(String command) {
         storageInfo();
     }
     else if (command.equals("test")) {
-        btSendData("Test response: Arduino is responding to commands!\n");
+        btSendData("Test response: Arduino responding OK\n");
     }
     else {
         String response = "Unknown command: " + command + "\n";

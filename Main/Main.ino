@@ -3,7 +3,7 @@
 // Global variable definitions (only define once here)
 char serialBuffer[128];
 char outputBuffer[8192];
-char storageBuffer[8192]; 
+char storageBuffer[16384]; 
 
 unsigned long lastSensorReading = 0;
 unsigned long lastBTTransmit = 0;

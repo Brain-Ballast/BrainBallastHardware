@@ -1,9 +1,3 @@
 ::Libraries::
 SparkFun ADXL345.h
 BlueRobotics MS5837
-
-
-::TODO::
-SD card - Batch append/send dataBuffer - turn on then off
-Connection Layer for adafruit Lora - batch send every 30 seconds only when connected?
-BTSerial send csv

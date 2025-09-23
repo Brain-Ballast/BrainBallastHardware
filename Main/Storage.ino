@@ -236,30 +236,62 @@ void storageDownloadFile(String filename) {
         return;
     }
     
+    size_t fileSize = file.size();
+    
     // Send file info first
-    String response = "=== Downloading " + filename + " (" + String(file.size()) + " bytes) ===\n";
+    String response = "=== Downloading " + filename + " (" + String(fileSize) + " bytes) ===\n";
     btSendData(response.c_str());
     
-    // Read and send file in larger chunks optimized for ESP32-C3 BLE
-    char buffer[512];  // Larger buffer for better throughput
+    // Use much larger buffer and aggressive optimization
+    const int BUFFER_SIZE = 2048;  // 2KB buffer
+    char* buffer = (char*)malloc(BUFFER_SIZE);
+    
+    if (!buffer) {
+        btSendData("Memory allocation failed\n");
+        file.close();
+        return;
+    }
+    
     int totalSent = 0;
+    unsigned long startTime = millis();
+    
     while (file.available()) {
-        int bytesRead = file.read((uint8_t*)buffer, sizeof(buffer) - 1);
+        // Read large chunk
+        int bytesRead = file.read((uint8_t*)buffer, BUFFER_SIZE - 1);
         buffer[bytesRead] = '\0';
         
-        // Send data immediately without delay for max speed
+        // Send immediately without any delays
         if (btSendData(buffer)) {
             totalSent += bytesRead;
         } else {
-            // Only add delay if send failed (BT buffer full)
-            delay(50);
+            // Only delay if BT send failed
+            delay(10);
+        }
+        
+        // Yield CPU briefly every 8KB to prevent watchdog timeout
+        if (totalSent % 8192 == 0) {
+            yield();
+            
+            // Print progress for large files
+            if (fileSize > 10000) {
+                int percent = (totalSent * 100) / fileSize;
+                sprintf(serialBuffer, "Download progress: %d%% (%d/%d bytes)\n", 
+                        percent, totalSent, (int)fileSize);
+                Serial.print(serialBuffer);
+            }
         }
     }
     
+    free(buffer);
     file.close();
+    
+    unsigned long elapsed = millis() - startTime;
+    float speedKBps = (float)totalSent / elapsed;  // KB per second
+    
     btSendData("\n=== End of file ===\n");
     
-    sprintf(serialBuffer, "Download complete: %d bytes sent\n", totalSent);
+    sprintf(serialBuffer, "Download complete: %d bytes in %lums (%.1f KB/s)\n", 
+            totalSent, elapsed, speedKBps);
     Serial.print(serialBuffer);
 }
 
@@ -278,27 +310,75 @@ void storageTailFile(String filename, int lines) {
         return;
     }
     
-    // Simple tail implementation - read entire file and return last N lines
-    String content = "";
-    while (file.available()) {
-        content += (char)file.read();
-    }
-    file.close();
-    
-    // Count lines from the end
-    int lineCount = 0;
-    int pos = content.length() - 1;
-    while (pos >= 0 && lineCount < lines) {
-        if (content.charAt(pos) == '\n') {
-            lineCount++;
-        }
-        pos--;
-    }
-    
-    String result = content.substring(pos + 2); // +2 to skip the newline
+    // Send header
     String response = "=== Last " + String(lines) + " lines of " + filename + " ===\n";
     btSendData(response.c_str());
-    btSendData(result.c_str());
+    
+    // For small files, read entire content
+    size_t fileSize = file.size();
+    if (fileSize < 10000) {  // Less than 10KB
+        String content = "";
+        while (file.available()) {
+            content += (char)file.read();
+        }
+        file.close();
+        
+        // Split into lines and get last N
+        int lineCount = 0;
+        int pos = content.length() - 1;
+        
+        // Count backwards to find start position for N lines
+        while (pos >= 0 && lineCount < lines) {
+            if (content.charAt(pos) == '\n') {
+                lineCount++;
+            }
+            pos--;
+        }
+        
+        // Extract and send only the requested lines
+        String result;
+        if (pos >= 0) {
+            result = content.substring(pos + 2); // +2 to skip the newline we found
+        } else {
+            result = content; // File has fewer lines than requested
+        }
+        
+        // Count actual lines in result to verify
+        int actualLines = 0;
+        for (int i = 0; i < result.length(); i++) {
+            if (result.charAt(i) == '\n') actualLines++;
+        }
+        
+        // Send the result
+        btSendData(result.c_str());
+        
+        sprintf(serialBuffer, "Tail sent %d lines\n", actualLines);
+        Serial.print(serialBuffer);
+    } else {
+        // For large files, use seek-based approach
+        file.seek(fileSize - (lines * 100)); // Rough estimate: 100 chars per line
+        
+        String buffer = "";
+        int linesSent = 0;
+        
+        while (file.available() && linesSent < lines) {
+            String line = file.readStringUntil('\n');
+            line.trim();
+            if (line.length() > 0) {
+                buffer += line + "\n";
+                linesSent++;
+            }
+        }
+        
+        file.close();
+        btSendData(buffer.c_str());
+        
+        sprintf(serialBuffer, "Tail sent %d lines from large file\n", linesSent);
+        Serial.print(serialBuffer);
+    }
+    
+    // Send completion marker
+    btSendData("Command completed\n");
 }
 
 void storageFileSize(String filename) {
