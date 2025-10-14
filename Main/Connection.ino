@@ -11,6 +11,7 @@ extern char serialBuffer[128];
 bool bleConnected = false;
 bool bleInitialized = false;
 String commandBuffer = "";
+bool processingCommand = false;  // Prevent sending data during command processing
 
 #define SERVICE_UUID           "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
 #define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
@@ -39,7 +40,7 @@ class MyCallbacks: public BLECharacteristicCallbacks {
       if (rxValue.length() > 0) {
         commandBuffer += rxValue;
         
-        sprintf(serialBuffer, "Received: %s\n", rxValue.c_str());
+        sprintf(serialBuffer, "Received command: %s\n", rxValue.c_str());
         Serial.print(serialBuffer);
       }
     }
@@ -96,12 +97,18 @@ bool btIsConnected() {
 }
 
 bool btSendData(const char* data) {
-    if (!bleConnected || !bleInitialized) {
+    if (!bleConnected || !bleInitialized || processingCommand) {
         return false;
     }
     
     int dataLen = strlen(data);
-    const int maxChunk = 512;  // Increased from 200 to 512
+    
+    // Don't send empty data or single newlines
+    if (dataLen == 0 || (dataLen == 1 && data[0] == '\n')) {
+        return false;
+    }
+    
+    const int maxChunk = 512;
     
     for (int i = 0; i < dataLen; i += maxChunk) {
         int chunkLen = min(maxChunk, dataLen - i);
@@ -112,30 +119,24 @@ bool btSendData(const char* data) {
         
         // Reduced delay for better speed
         if (chunkLen == maxChunk && dataLen > 1024) {
-            delayMicroseconds(500);  // 0.5ms instead of 10ms
+            delayMicroseconds(500);
         }
     }
     
-    sprintf(serialBuffer, "BLE sent %d bytes\n", dataLen);
+    sprintf(serialBuffer, "BLE sent %d bytes (sensor data)\n", dataLen);
     Serial.print(serialBuffer);
     return true;
 }
+
 void btReconnect() {
     if (!bleInitialized) return;
     
-    unsigned long startReconnect = millis();
     sprintf(serialBuffer, "Starting BT reconnection...\n");
     Serial.print(serialBuffer);
     
-    // Quick reconnect attempt - timeout after 5 seconds max
     if (!bleConnected && bleInitialized) {
         pServer->startAdvertising();
         sprintf(serialBuffer, "Restarted BLE advertising\n");
-        Serial.print(serialBuffer);
-        
-        // Don't block - just restart advertising and return quickly
-        unsigned long elapsed = millis() - startReconnect;
-        sprintf(serialBuffer, "BT reconnect attempt completed in %lums\n", elapsed);
         Serial.print(serialBuffer);
     }
 }
@@ -148,21 +149,20 @@ void btHandleCommands() {
         
         command.trim();
         if (command.length() > 0) {
+            processingCommand = true;  // Block sensor data transmission
             processCommand(command);
+            processingCommand = false;  // Re-enable sensor data transmission
         }
     }
 }
 
 void processCommand(String command) {
-    sprintf(serialBuffer, "Processing: %s\n", command.c_str());
+    sprintf(serialBuffer, "Processing command: %s\n", command.c_str());
     Serial.print(serialBuffer);
     
     // Send acknowledgment
-    String ack = "Received: " + command + "\n";
-    btSendData(ack.c_str());
-    
-    // Add small delay to ensure acknowledgment is sent first
-    delay(10);
+    String ack = "ACK: " + command + "\n";
+    sendCommandResponse(ack.c_str());
     
     if (command.equals("list")) {
         storageListFiles();
@@ -179,13 +179,13 @@ void processCommand(String command) {
             String amountStr = command.substring(spaceIndex + 1);
             filename.trim();
             int amount = amountStr.toInt();
-            if (amount > 0 && amount <= 1000) {  // Limit to reasonable number
+            if (amount > 0 && amount <= 1000) {
                 storageTailFile(filename, amount);
             } else {
-                btSendData("Invalid line count (1-1000): tail <filename> <lines>\n");
+                sendCommandResponse("ERROR: Invalid line count (1-1000)\n");
             }
         } else {
-            btSendData("Usage: tail <filename> <lines>\n");
+            sendCommandResponse("ERROR: Usage: tail <filename> <lines>\n");
         }
     }
     else if (command.startsWith("size ")) {
@@ -201,15 +201,31 @@ void processCommand(String command) {
     else if (command.equals("info")) {
         storageInfo();
     }
-    else if (command.equals("test")) {
-        btSendData("Test response: Arduino responding OK\n");
-    }
     else {
-        String response = "Unknown command: " + command + "\n";
-        btSendData(response.c_str());
+        // Silently ignore unknown commands (like old 'test' commands)
+        sprintf(serialBuffer, "Ignoring unknown command: %s\n", command.c_str());
+        Serial.print(serialBuffer);
     }
 }
 
-void sendHelp() {
-    // Help is now handled on Python side - this function removed
+// Separate function for sending command responses (different from sensor data)
+void sendCommandResponse(const char* response) {
+    if (!bleConnected || !bleInitialized) {
+        return;
+    }
+    
+    int dataLen = strlen(response);
+    const int maxChunk = 512;
+    
+    for (int i = 0; i < dataLen; i += maxChunk) {
+        int chunkLen = min(maxChunk, dataLen - i);
+        String chunk = String(response).substring(i, i + chunkLen);
+        
+        pTxCharacteristic->setValue(chunk.c_str());
+        pTxCharacteristic->notify();
+        
+        if (chunkLen == maxChunk) {
+            delayMicroseconds(500);
+        }
+    }
 }
