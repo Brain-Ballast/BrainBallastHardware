@@ -44,7 +44,7 @@ class SimpleBLELogger:
         """Scan for the BrainBallast device"""
         print("🔍 Scanning for BLE devices...")
         try:
-            devices = await BleakScanner.discover(timeout=10.0)
+            devices = await BleakScanner.discover(timeout=120.0)
             for device in devices:
                 if device.name == DEVICE_NAME:
                     print(f"✅ Found {DEVICE_NAME} at {device.address}")

@@ -3,7 +3,7 @@
 // Global variable definitions
 char serialBuffer[128];
 char outputBuffer[32768];  // Increased buffer size
-char storageBuffer[32768]; // Increased buffer size
+char storageBuffer[65536]; // Increased buffer size
 char lastCSVLine[128];     // Store last sensor reading for printing
 
 unsigned long lastSensorReading = 0;
