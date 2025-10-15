@@ -16,6 +16,7 @@ unsigned long startTime = 0;
 
 void setup() {
     Serial.begin(SERIAL_BAUD);
+    delay(50);
     startTime = millis();
     
     // Initialize buffers
