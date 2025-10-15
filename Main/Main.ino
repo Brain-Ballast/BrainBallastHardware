@@ -70,8 +70,7 @@ void loop() {
         }
     }
     
-    // Try to reconnect every 2 minutes if not connected
-    if (checkTimer(lastBTReconnect, 120000)) {
+    if (checkTimer(lastBTReconnect, 40000)) {
         if (!btIsConnected()) {
             btReconnect();
         }

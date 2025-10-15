@@ -8,10 +8,10 @@ from bleak import BleakScanner, BleakClient
 from bleak.backends.characteristic import BleakGATTCharacteristic
 
 # --- Config ---
-SERVICE_UUID = "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
-CHARACTERISTIC_UUID_RX = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E" 
-CHARACTERISTIC_UUID_TX = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
-DEVICE_NAME = "BrainBallast"
+SERVICE_UUID = "6E400001-B5A3-F393-E0A9-E50E24DCCA8A"
+CHARACTERISTIC_UUID_RX = "6E400002-B5A3-F393-E0A9-E50E24DCCA8A" 
+CHARACTERISTIC_UUID_TX = "6E400003-B5A3-F393-E0A9-E50E24DCCA8A"
+DEVICE_NAME = "BrainBallast2"
 
 # --- Logging ---
 logging.basicConfig(level=logging.INFO)
@@ -32,24 +32,36 @@ class SimpleBLELogger:
         
         # Connection monitoring
         self.last_data_received = time.time()
-        self.connection_timeout = 30.0  # 30 seconds without data = dead connection
+        self.last_ping_sent = time.time()
+        self.connection_timeout = 20.0  # 20 seconds without data = check connection
+        self.ping_interval = 10.0  # Send ping every 10 seconds
         self.monitor_task = None
         
         # Stats
         self.lines_logged = 0
         self.bytes_received = 0
         self.session_start = None
+        self.reconnect_count = 0
 
     async def scan_for_device(self):
         """Scan for the BrainBallast device"""
         print("🔍 Scanning for BLE devices...")
+        print("⚠️  If device not found, make sure it's NOT paired/connected in system Bluetooth!")
         try:
-            devices = await BleakScanner.discover(timeout=120.0)
+            devices = await BleakScanner.discover(timeout=10.0)
+            
+            print(f"Found {len(devices)} BLE devices:")
             for device in devices:
+                print(f"  - {device.name or 'Unknown'} ({device.address})")
                 if device.name == DEVICE_NAME:
                     print(f"✅ Found {DEVICE_NAME} at {device.address}")
                     return device
-            print(f"❌ Device '{DEVICE_NAME}' not found!")
+            
+            print(f"\n❌ Device '{DEVICE_NAME}' not found!")
+            print("💡 Tips:")
+            print("   1. Make sure device is powered on")
+            print("   2. Disconnect/remove it from system Bluetooth settings")
+            print("   3. Try resetting the ESP32")
             return None
         except Exception as e:
             print(f"Scan error: {e}")
@@ -59,66 +71,107 @@ class SimpleBLELogger:
         """Connect and start auto-logging"""
         print(f"🔗 Connecting to {device.address}...")
         try:
-            self.client = BleakClient(device.address)
+            self.client = BleakClient(device.address, timeout=20.0)
             await self.client.connect()
+            
+            # Verify connection is actually working
+            if not self.client.is_connected:
+                print("❌ Connection failed - client not connected")
+                return False
             
             self.connected = True
             self.last_data_received = time.time()
-            self.session_start = time.time()
+            self.last_ping_sent = time.time()
+            
+            if self.session_start is None:
+                self.session_start = time.time()
+            
             print("✅ Connected!")
 
+            # Start notifications
             await self.client.start_notify(CHARACTERISTIC_UUID_TX, self.notification_handler)
             
             # Start connection monitor
+            if self.monitor_task:
+                self.monitor_task.cancel()
             self.monitor_task = asyncio.create_task(self.connection_monitor())
             
-            # Auto-start logging
-            self.start_logging()
+            # Auto-start logging if not already logging
+            if not self.csv_writer:
+                self.start_logging()
+                print(f"📊 Auto-logging started to: {self.current_log_path}")
+            else:
+                print(f"📊 Continuing logging to: {self.current_log_path}")
             
-            print(f"📊 Auto-logging started to: {self.current_log_path}")
+            return True
             
         except Exception as e:
             print(f"❌ Connection failed: {e}")
             self.connected = False
-            raise
+            return False
 
     async def disconnect(self):
         """Disconnect gracefully"""
         if self.monitor_task:
             self.monitor_task.cancel()
-            
-        if self.client and self.connected:
-            self.stop_logging()
             try:
-                await self.client.stop_notify(CHARACTERISTIC_UUID_TX)
-                await self.client.disconnect()
-            except:
+                await self.monitor_task
+            except asyncio.CancelledError:
                 pass
-            self.connected = False
-            print("👋 Disconnected.")
+            
+        if self.client:
+            try:
+                if self.client.is_connected:
+                    await self.client.stop_notify(CHARACTERISTIC_UUID_TX)
+                    await self.client.disconnect()
+            except Exception as e:
+                print(f"Disconnect error: {e}")
+            finally:
+                self.client = None
+                
+        self.connected = False
+        self.stop_logging()
+        print("👋 Disconnected.")
 
     async def connection_monitor(self):
-        """Monitor connection health based on data reception"""
-        while self.connected:
+        """Monitor connection health based on data reception and active checks"""
+        while True:
             try:
+                await asyncio.sleep(2.0)
+                
+                if not self.connected:
+                    break
+                
+                # Check if client is still actually connected
+                if self.client and not self.client.is_connected:
+                    print("💀 BLE client reports disconnected")
+                    self.connected = False
+                    print("🔄 Attempting to reconnect...")
+                    await self.reconnect()
+                    continue
+                
                 current_time = time.time()
                 time_since_data = current_time - self.last_data_received
+                time_since_ping = current_time - self.last_ping_sent
+                
+                # Send periodic ping to keep connection alive
+                if time_since_ping > self.ping_interval and not self.command_mode:
+                    try:
+                        await self.send_command_raw("ping")
+                        self.last_ping_sent = current_time
+                    except Exception as e:
+                        print(f"Ping failed: {e}")
+                        self.connected = False
+                        await self.reconnect()
+                        continue
                 
                 # If no data for too long, connection is dead
                 if time_since_data > self.connection_timeout:
                     print(f"💀 No data received for {time_since_data:.1f}s - connection appears dead")
+                    self.connected = False
                     print("🔄 Attempting to reconnect...")
-                    
-                    success = await self.reconnect()
-                    if success:
-                        print("✅ Reconnection successful!")
-                        continue
-                    else:
-                        print("❌ Reconnection failed, will retry...")
-                        await asyncio.sleep(10.0)
-                        continue
-                
-                await asyncio.sleep(5.0)
+                    await self.reconnect()
+                    continue
                 
             except asyncio.CancelledError:
                 break
@@ -128,20 +181,36 @@ class SimpleBLELogger:
 
     async def reconnect(self):
         """Attempt to reconnect"""
+        self.reconnect_count += 1
+        print(f"🔄 Reconnection attempt #{self.reconnect_count}")
+        
         try:
+            # Full cleanup
             if self.client:
                 try:
-                    await self.client.disconnect()
+                    if self.client.is_connected:
+                        await self.client.disconnect()
                 except:
                     pass
+                self.client = None
             
             self.connected = False
             await asyncio.sleep(2.0)
             
+            # Scan and reconnect
+            print("🔍 Scanning for device...")
             device = await self.scan_for_device()
+            
             if device:
-                await self.connect(device)
-                return True
+                success = await self.connect(device)
+                if success:
+                    print(f"✅ Reconnection #{self.reconnect_count} successful!")
+                    return True
+                else:
+                    print(f"❌ Reconnection #{self.reconnect_count} failed")
+            else:
+                print("❌ Device not found during reconnection")
+            
             return False
                 
         except Exception as e:
@@ -170,6 +239,10 @@ class SimpleBLELogger:
 
     def _process_line(self, line):
         """Process individual lines"""
+        # Handle ping responses silently
+        if line == "PONG":
+            return
+        
         # Handle download mode
         if self.download_mode:
             if "=== End of file ===" in line:
@@ -189,9 +262,10 @@ class SimpleBLELogger:
             
             # End markers for various commands
             end_markers = [
-                "=== End of file list ===", "=== End of file ===", 
-                "=== End of tail ===", "=== End of info ===",
-                "ERROR:", "SUCCESS:"
+                "End of file list", "End of file", 
+                "End of tail", "End of info",
+                "Command completed",
+                "ERROR:", "SUCCESS:", "PONG"
             ]
             
             if any(marker in line for marker in end_markers):
@@ -265,9 +339,23 @@ class SimpleBLELogger:
                 print(f"   Lines: {self.lines_logged}")
                 print(f"   Size: {file_size:,} bytes")
                 print(f"   Duration: {elapsed:.1f}s")
+                print(f"   Reconnections: {self.reconnect_count}")
                 self.current_log_path = None
         except Exception as e:
             print(f"Error stopping logging: {e}")
+
+    async def send_command_raw(self, command):
+        """Send command without response handling (for pings)"""
+        if not self.connected or not self.client:
+            return False
+        
+        try:
+            command_with_newline = command + "\n"
+            await self.client.write_gatt_char(CHARACTERISTIC_UUID_RX, command_with_newline.encode())
+            return True
+        except Exception as e:
+            print(f"Raw command send error: {e}")
+            return False
 
     async def send_command(self, command, timeout=30.0):
         """Send command and wait for response"""
@@ -349,7 +437,7 @@ class SimpleBLELogger:
         print("🧠 BrainBallast Auto-Logger")
         print("="*60)
         print("\n📊 Auto-logging sensor data in background")
-        print(f"📁 Log file: {self.current_log_path}")
+        print(f"📝 Log file: {self.current_log_path}")
         print("\n💬 Commands:")
         print("  list              - List files on device")
         print("  download <file>   - Download file to logs/ folder")
@@ -405,6 +493,7 @@ class SimpleBLELogger:
         print(f"   Lines logged: {self.lines_logged:,}")
         print(f"   Bytes received: {self.bytes_received:,}")
         print(f"   Logging rate: {rate:.1f} lines/sec")
+        print(f"   Reconnections: {self.reconnect_count}")
         print(f"   Log file: {self.current_log_path}")
         print()
 
