@@ -9,10 +9,6 @@ int batteryPercent(float v) {
   return (int)((v - 2.0) / (3.0 - 2.0) * 100);
 }
 
-// void batterysetup() {
-//   Serial.println("Battery monitor started...");
-// }
-
 void batteryStep() {
   int raw = analogRead(BATTERY_PIN);
   float voltage = (raw / 4095.0) * 3.3;
