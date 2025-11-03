@@ -8,6 +8,7 @@ char lastCSVLine[128];     // Store last sensor reading for printing
 
 unsigned long lastSensorReading = 0;
 unsigned long lastBTTransmit = 0;
+unsigned long lastLoRaTransmit = 0;
 unsigned long lastStorageWrite = 0;
 unsigned long lastBTReconnect = 0;
 unsigned long lastCommandCheck = 0;
@@ -28,6 +29,7 @@ void setup() {
     adxlSetup();
     storageSetup();
     connectionSetup();
+    loRaSetup();
     
     // Add CSV header
     sprintf(serialBuffer, "pres,temp,x,y,z,timestamp\n");
@@ -56,6 +58,17 @@ void loop() {
                 // BT not connected, keep data cached
                 sprintf(serialBuffer, "BT not connected, data cached (%d chars)\n", strlen(outputBuffer));
                 Serial.print(serialBuffer);
+            }
+        }
+    }
+    // Send LoRa data every 10 seconds
+    if (checkTimer(lastLoRaTransmit, 10000)) {
+        if (strlen(outputBuffer) > 0) {
+            if (loRaSendData(outputBuffer)) {
+                outputBuffer[0] = '\0';  // Clear buffer after send
+                Serial.print("Sending LoRa: \n");
+            } else {
+                Serial.printf("LoRa busy, data cached (%d chars)\n", strlen(outputBuffer));
             }
         }
     }
